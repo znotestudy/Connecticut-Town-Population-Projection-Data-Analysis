@@ -3,6 +3,8 @@
 ```
 Dataset: Connecticut (USA) Town Population Projections, 2015-2040
 URL: https://catalog.data.gov/dataset/2015-2040-population-projections-town-level
+Data location: [Data Source](https://catalog.data.gov/dataset/2015-2040-population-projections-town-level)
+Alternate Data Source: [Connecticut-Town-Population-Projection.csv](Connecticut-Town-Population-Projection.csv)
 The dataset consists of 19,266 rows and 6 columns. It provides population projections for
 Connecticut towns from 2015 to 2040. The data are broken down by age groups and gender.
 The data set could be used for demographic studies, resource planning, and policy development. 
