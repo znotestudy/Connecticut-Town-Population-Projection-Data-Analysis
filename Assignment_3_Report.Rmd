@@ -1,0 +1,328 @@
+---
+title: "Connecticut (USA) Town Population Projections (2015–2040): Dataset Exploratory Report"
+author: "Victor"
+date: "2025-08-31"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+  pdf_document: default
+---
+
+**Dataset:** `Connecticut_Town_Population_Projections__2015-2040.csv`  
+**Source link**: [Connecticut Town Population Projections](https://catalog.data.gov/dataset/2015-2040-population-projections-town-level)\
+**Scope:** Town-level population projections by year, age group, and sex (male, female).  
+**Goal:** Graph and explore dataset with R and answering the five questions via R code and Explanation.
+
+## . Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+# Install/load packages
+pkgs <- c("tidyverse", "broom", "janitor")
+to_install <- pkgs[!pkgs %in% installed.packages()[,'Package']]
+if (length(to_install) > 0) install.packages(to_install, repos = "https://cloud.r-project.org")
+invisible(lapply(pkgs, library, character.only = TRUE))
+
+```
+
+## . Load Data File (CSV)
+
+```{r load}
+dataset <- "Connecticut_Town_Population_Projections__2015-2040.csv"
+dataset_raw <- readr::read_csv(dataset, show_col_types = FALSE) |>
+  janitor::clean_names()
+
+glimpse(dataset_raw)
+summary(dataset_raw)
+```
+
+**Columns:**  
+- `year` (int), `geography` (chr, CT town), `age_group` (chr like `10_14`), `male` (int), `female` (int), `total` (int)
+
+---
+
+## . Plot selected columns together to visualize the data
+
+Annotated line chart of **Total population over time** for a handful of representative towns:  
+1) Aggregate town-year totals (across all age groups).  
+2) Select the **top 3 towns by average total population** across the period to ensure meaningful lines.  
+3) Plot trajectories from 2015–2040.
+
+```{r q1-prepare, message=FALSE, warning=FALSE}
+town_year <- dataset_raw |>
+  group_by(geography, year) |>
+  summarise(total_town = sum(total, na.rm = TRUE), .groups = "drop")
+
+# Choose top 3 towns by average total population across years
+top_towns <- town_year |>
+  group_by(geography) |>
+  summarise(avg_pop = mean(total_town, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(avg_pop)) |>
+  slice_head(n = 3) |>
+  pull(geography)
+
+top_towns
+```
+
+```{r q1-plot, fig.width=8, fig.height=5, message=FALSE, warning=FALSE}
+library(ggplot2)
+
+plot_data <- town_year |>
+  filter(geography %in% top_towns)
+
+ggplot(plot_data, aes(x = year, y = total_town, color = geography)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.7) +
+  labs(
+    title = "Town Population Projections (Top 3 Towns by Average Size)",
+    subtitle = "Connecticut, 2015–2040 (summed across all age groups)",
+    x = "Year",
+    y = "Projected Total Population",
+    color = "Town"
+  ) +
+  scale_x_continuous(breaks = scales::pretty_breaks()) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal(base_size = 12)
+```
+
+**Explanation (Q1):** The chart shows how total projected population changes over time for the three largest towns (by average size). We can quickly compare growth/decline trajectories, inflection points, and relative magnitudes among these towns.
+
+---
+
+## . Simple statistical calculation aligned with a hypothesis
+
+**Example question/hypothesis:** “Are the largest towns (by average size) relatively stable in population across the projection window?”  
+Compute the **mean** and **standard deviation** of the annual total population for each selected town. Note: A small SD relative to the mean suggests relative stability; a large SD suggests more volatility/trend.
+
+```{r q2-stats}
+q2_stats <- town_year |>
+  filter(geography %in% top_towns) |>
+  group_by(geography) |>
+  summarise(
+    mean_total = mean(total_town, na.rm = TRUE),
+    sd_total   = sd(total_town, na.rm = TRUE),
+    cv_percent = 100 * sd_total / mean_total,
+    .groups = "drop"
+  )
+
+q2_stats |>
+  mutate(across(where(is.numeric), ~round(.x, 2)))
+```
+
+**Note:**  
+- `mean_total` gives the typical population level across years.  
+- `sd_total` and `cv_percent` (coefficient of variation) quantify variability. Lower CV indicates relative stability. Values are interpreted in the context of municipal planning (schools, housing, healthcare demand).
+
+**Explanation (Q2):**
+
+**Bridgeport:** Average population ≈ 303,384 with a CV of 2.45%. That’s fairly stable—year-to-year changes are small relative to its size. Planning for schools, housing, and services can assume relatively steady demand.
+
+**New Haven:** Average ≈ 278,498, but a higher CV (3.47%). This town shows more variability than the others, meaning planners might face more uncertainty in future resource needs.
+
+**Stamford:** Average ≈ 255,469, CV only 1.8%. This is the most stable of the three, with the smallest relative fluctuations.
+
+**Summary**
+
+All three large towns project stable populations, but New Haven is somewhat more volatile. Bridgeport and Stamford are highly consistent, with Stamford the most predictable. For municipal planning, Stamford is easiest to forecast, New Haven needs more flexible planning, and Bridgeport is in between.
+
+
+---
+
+## . Regression/correlation to detect a relationship
+
+Test the relationship between **Year** and the **Statewide total population**, aggregating over all towns, to see whether the projection implies growth or decline overall.
+
+```{r q3-regression}
+state_by_year <- dataset_raw |>
+  group_by(year) |>
+  summarise(state_total = sum(total, na.rm = TRUE), .groups = "drop")
+
+# Correlation
+state_cor <- cor(state_by_year$year, state_by_year$state_total)
+
+# Linear regression
+fit <- lm(state_total ~ year, data = state_by_year)
+fit_tidy <- broom::tidy(fit)
+fit_glance <- broom::glance(fit)
+
+list(correlation = state_cor)  # quick check
+fit_tidy
+fit_glance
+```
+
+```{r q3-plot, fig.width=7, fig.height=4}
+ggplot(state_by_year, aes(year, state_total)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Statewide Total Population vs Year (2015–2040)",
+    x = "Year",
+    y = "Statewide Total Population"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal(base_size = 12)
+```
+
+**Note:** 
+
+- The **correlation** and the **slope** from `lm(state_total ~ year)` indicate whether statewide total population is trending up or down, and by how much per year (on average).  
+- Use `estimate` for `year` (slope) and `p.value` to judge statistical significance. This aligns with planning questions about aggregate demand (schools, infrastructure) over the projection horizon.
+
+**Explanation (Q3):** 
+
+The regression analysis demonstrates a strong linear relationship between year and Connecticut’s statewide population, with a correlation of 0.997 and an R² of 0.994. The model indicates that the population is expected to increase by approximately 5,000 residents annually, amounting to roughly 125,000 additional residents over the 2015–2040 period. The slope is highly significant (p < 0.001), and residual variation is minimal, confirming the projection. These results suggest that Connecticut’s population growth will be steady, modest, and highly predictable, providing a reliable foundation for long-term planning. Consequently, policymakers should focus less on statewide expansion pressures and more on shifts in population composition, such as aging demographics and regional redistribution, when designing future strategies for education, healthcare, housing, and infrastructure.
+
+---
+
+## . Histogram of a numerical column and discussion of distribution
+
+We focus on the **distribution of town total populations** in a mid-horizon year (e.g., **2025**). This helps reveal heterogeneity—many small towns vs. a few large ones.
+
+```{r q4-prep}
+focus_year <- 2025
+
+town_totals_focus_year <- dataset_raw |>
+  filter(year == focus_year) |>
+  group_by(geography) |>
+  summarise(total_town = sum(total, na.rm = TRUE), .groups = "drop")
+
+summary(town_totals_focus_year$total_town)
+```
+
+```{r q4-hist, fig.width=7, fig.height=4}
+ggplot(town_totals_focus_year, aes(x = total_town)) +
+  geom_histogram(binwidth = 2500, boundary = 0, closed = "left") +
+  labs(
+    title = paste0("Distribution of Town Total Populations in ", focus_year),
+    x = "Town Total Population",
+    y = "Count of Towns"
+  ) +
+  scale_x_continuous(labels = scales::comma) +
+  theme_minimal(base_size = 12)
+```
+
+**Key Interpretation**
+
+  - Right-skewed distribution:** Most towns have relatively small populations, while only a few reach very high levels (up to ~303,000).
+
+  - Summary values:
+
+      - Median: ~26,408 (half the towns are below this size).
+
+      - 1st Quartile (25%): ~10,865 → a quarter of towns have fewer than ~11,000 residents.
+
+      - 3rd Quartile (75%): ~42,826 → three-quarters of towns have fewer than ~43,000 residents.
+
+      - Maximum: ~303,597 (outlier towns like Bridgeport).
+
+
+  - Implication: Connecticut’s settlement pattern is dominated by many small-to-medium towns with a handful of very large urban centers.
+
+**Explanation (Q4):** 
+
+In 2025, most Connecticut towns are projected to have modest populations, with a median of about 26,000 residents, while only a few urban centers exceed 100,000. The distribution is strongly right-skewed, reflecting the dominance of many small towns alongside a handful of large cities such as Bridgeport. This imbalance underscores the need for tailored planning: efficient resource allocation in smaller communities and capacity expansion in major urban centers.
+
+---
+
+## . Two-group test: Male vs Female town populations (paired test)
+
+Test whether **average Male vs Female population** differs by town in the same year (**`r focus_year`**). Because Male and Female are measured **on the same towns**, we use a **paired** test. We first check normality of the **differences**; if non-normal, we’ll use the **Wilcoxon signed-rank** test.
+
+```{r q5-prepare}
+mf_wide <- dataset_raw |>
+  filter(year == focus_year) |>
+  group_by(geography) |>
+  summarise(
+    male_town   = sum(male, na.rm = TRUE),
+    female_town = sum(female, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+mf_wide <- mf_wide |>
+  mutate(diff = male_town - female_town)
+
+# Normality check on paired differences
+shapiro <- shapiro.test(mf_wide$diff)
+
+shapiro
+summary(mf_wide$diff)
+```
+
+```{r q5-tests}
+if (shapiro$p.value >= 0.05) {
+  # Differences look approximately normal -> paired t-test
+  test_res <- t.test(mf_wide$male_town, mf_wide$female_town, paired = TRUE, alternative = "two.sided")
+  test_used <- "Paired t-test"
+} else {
+  # Non-normal differences -> Wilcoxon signed-rank test
+  test_res <- wilcox.test(mf_wide$male_town, mf_wide$female_town, paired = TRUE, alternative = "two.sided", exact = FALSE)
+  test_used <- "Wilcoxon signed-rank test"
+}
+
+list(
+  test_used = test_used,
+  statistic = unname(test_res$statistic),
+  p_value   = unname(test_res$p.value),
+  conf_int  = if (!is.null(test_res$conf.int)) round(test_res$conf.int, 1) else NA
+)
+```
+
+```{r q5-annotated-plot, fig.width=7, fig.height=4}
+mf_long <- mf_wide |>
+  select(geography, male_town, female_town) |>
+  pivot_longer(cols = c(male_town, female_town), names_to = "sex", values_to = "count")
+
+ggplot(mf_long, aes(x = sex, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  labs(
+    title = paste0("Town Population by Sex in ", focus_year, " (Paired by Town)"),
+    x = "Sex",
+    y = "Population per Town"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal(base_size = 12)
+```
+
+**Note:**  
+- We conduct a **paired comparison** of Male vs Female counts per town in the same year.  
+- Choice of test is **data-driven** via the normality check on differences.  
+- The resulting p-value indicates whether there is statistically significant difference between male and female town totals. The box/jitter plot provides a visual companion to the test.
+
+**Explanation (Q5):** 
+
+
+**Statistical Test:**
+
+  1. Normality Test (Shapiro-Wilk)
+
+      - W = 0.81, p < 0.001 → the differences between male and female populations per town are not normally distributed.
+
+      - Because of this, the Wilcoxon signed-rank test (a non-parametric paired test) was chosen instead of a paired t-test.
+
+  2. Summary of Differences (male – female)
+
+      - Mean difference: about –1,009, meaning towns have on average ~1,000 fewer males than females.
+
+      - Median difference: –497 → half the towns have at least ~500 fewer males.
+
+      - Range: from –10,215 (much fewer males) to +7,994 (some towns with more males).
+
+  3. Wilcoxon Test Result
+
+      - Test statistic: 2435
+
+      - p-value: ≈ 9.2 × 10⁻¹⁴ (extremely small)
+
+      - Interpretation: There is a statistically significant difference between male and female populations across towns in 2025.
+
+
+***Summary***
+
+The paired analysis reveals that, although population sizes vary widely across towns, female populations are systematically higher than male populations in 2025. This difference is highly significant (Wilcoxon test, p < 0.001), with towns averaging about 1,000 more females than males. For planning purposes, this implies that gender composition should be factored into services such as healthcare and community programs, as the imbalance is consistent statewide.
+
+---
+
+
